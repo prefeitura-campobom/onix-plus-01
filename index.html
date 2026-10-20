@@ -105,6 +105,13 @@
             font-size: 0.9rem;
         }
 
+        .info-km-anterior {
+            font-size: 0.8rem;
+            color: #007bff;
+            font-weight: normal;
+            margin-left: 5px;
+        }
+
         input[type="text"], input[type="number"], textarea {
             width: 100%;
             padding: 10px;
@@ -227,7 +234,10 @@
         </div>
 
         <div class="form-group">
-            <label for="quilometragem">QUILOMETRAGEM ATUAL (KM):</label>
+            <label for="quilometragem">
+                QUILOMETRAGEM ATUAL (KM):
+                <span id="labelKmAnterior" class="info-km-anterior"></span>
+            </label>
             <input type="number" id="quilometragem" required placeholder="Ex: 45230" min="0">
         </div>
 
@@ -248,7 +258,8 @@
 
     let tipoAtual = 'Saída';
     let veiculoPendente = false; 
-    let kmSaidaAnterior = 0;
+    let kmSaidaMinimo = 0;
+    let kmUltimoRetorno = 0;
 
     function selecionarTipo(tipo) {
         if (veiculoPendente && tipo === 'Saída') {
@@ -267,6 +278,8 @@
         const motorista = document.getElementById('motorista');
         const setor = document.getElementById('setor');
         const destino = document.getElementById('destino');
+        const inputKm = document.getElementById('quilometragem');
+        const labelKmAnterior = document.getElementById('labelKmAnterior');
 
         if (tipo === 'Saída') {
             btnSaida.className = 'btn-tipo active-saida';
@@ -275,6 +288,14 @@
             motorista.required = true;
             setor.required = true;
             destino.required = true;
+
+            // Insere obrigatoriamente o último retorno da planilha no campo de saída
+            if (kmUltimoRetorno > 0) {
+                inputKm.value = kmUltimoRetorno;
+                labelKmAnterior.innerText = `(KM Retorno anterior: ${kmUltimoRetorno})`;
+            } else {
+                labelKmAnterior.innerText = '';
+            }
         } else {
             btnRetorno.className = 'btn-tipo active-retorno';
             btnSaida.className = 'btn-tipo';
@@ -285,10 +306,16 @@
             setor.required = false;
             destino.value = '';
             destino.required = false;
+
+            if (kmSaidaMinimo > 0) {
+                inputKm.value = kmSaidaMinimo;
+                labelKmAnterior.innerText = `(KM de Saída: ${kmSaidaMinimo})`;
+            } else {
+                labelKmAnterior.innerText = '';
+            }
         }
     }
 
-    // Função para atualizar o status do carro ao abrir ou antes de enviar
     function verificarStatusVeiculo(callback) {
         fetch(SCRIPT_URL, {
             method: 'GET',
@@ -301,33 +328,39 @@
             const btnSaida = document.getElementById('btnSaida');
             const aviso = document.getElementById('avisoStatus');
 
-            if (statusVeiculo && !statusVeiculo.disponivel) {
-                veiculoPendente = true;
-                kmSaidaAnterior = Number(statusVeiculo.kmSaida) || 0;
-                
-                selecionarTipo('Retorno');
-                
-                btnSaida.disabled = true;
-                btnSaida.title = "Bloqueado: Veículo pendente de retorno";
-                
-                btnRetorno.disabled = false;
-                btnRetorno.removeAttribute('title');
+            if (statusVeiculo) {
+                kmSaidaMinimo = Number(statusVeiculo.kmSaida) || 0;
+                kmUltimoRetorno = Number(statusVeiculo.ultimoKmRetorno || statusVeiculo.kmRetorno || 0);
 
-                aviso.innerText = `Veículo pendente de retorno. ${statusVeiculo.detalhes}.`;
-                aviso.style.display = 'block';
+                if (!statusVeiculo.disponivel) {
+                    // Veículo na rua -> exige Retorno
+                    veiculoPendente = true;
+                    selecionarTipo('Retorno');
+
+                    btnSaida.disabled = true;
+                    btnSaida.title = "Bloqueado: Veículo pendente de retorno";
+                    btnRetorno.disabled = false;
+                    btnRetorno.removeAttribute('title');
+
+                    aviso.innerText = `Veículo pendente de retorno. ${statusVeiculo.detalhes}.`;
+                    aviso.style.display = 'block';
+                } else {
+                    // Veículo na garagem -> permite Saída e força o valor do último retorno
+                    veiculoPendente = false;
+                    selecionarTipo('Saída');
+
+                    btnRetorno.disabled = true;
+                    btnRetorno.title = "Aguardando saída";
+                    btnSaida.disabled = false;
+                    btnSaida.removeAttribute('title');
+
+                    aviso.style.display = 'none';
+                }
             } else {
                 veiculoPendente = false;
-                kmSaidaAnterior = 0;
-                
+                kmSaidaMinimo = 0;
+                kmUltimoRetorno = 0;
                 selecionarTipo('Saída');
-                
-                btnRetorno.disabled = true;
-                btnRetorno.title = "Aguardando saída";
-                
-                btnSaida.disabled = false;
-                btnSaida.removeAttribute('title');
-
-                aviso.style.display = 'none';
             }
 
             if (callback) callback();
@@ -352,10 +385,9 @@
             return;
         }
 
-        // Antes de enviar o retorno, faz uma verificação rápida do KM de saída real da planilha para garantir precisão
         verificarStatusVeiculo(function() {
-            if (tipoAtual === 'Retorno' && kmSaidaAnterior > 0 && quilometragem < kmSaidaAnterior) {
-                alert(`Erro: A quilometragem de retorno informada (${quilometragem}) é menor que a quilometragem de saída registrada na planilha (${kmSaidaAnterior}). Isso é um engano, por favor corrija o valor.`);
+            if (tipoAtual === 'Retorno' && kmSaidaMinimo > 0 && quilometragem < kmSaidaMinimo) {
+                alert(`Erro: A quilometragem de retorno informada (${quilometragem}) é menor que a quilometragem de saída registrada (${kmSaidaMinimo}). Por favor, corrija o valor.`);
                 return;
             }
 
@@ -420,7 +452,7 @@
                 alert('Registro efetuado com sucesso!');
                 btn.style.display = 'block';
                 loading.style.display = 'none';
-                document.getElementById('kmForm'.reset());
+                document.getElementById('kmForm').reset();
                 location.reload();
             });
         });
